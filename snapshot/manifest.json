@@ -1,0 +1,32 @@
+{
+  "name": "enterprise-compliance",
+  "pluginId": "compl-1",
+  "packageId": "pkg-1",
+  "kind": "dynamic-cordis-plugin",
+  "version": "1.0.0",
+  "status": "materialized-snapshot",
+  "purpose": "企业级一体化合规插件：SOC2/GDPR 自动化合规自检、敏感信息拦截与脱敏、操作日志审计追溯，并提供合规中心设置面板。",
+  "exportedAt": "exported-from-running-process",
+  "capabilities": {
+    "host": {
+      "redactionRules": 9,
+      "eventListeners": ["tools/result", "session-telemetry/record"],
+      "rpcHandlers": ["compliance.report", "compliance.audit", "compliance.redact", "compliance.stats"],
+      "tools": ["compliance_report", "compliance_redact", "compliance_audit"]
+    },
+    "client": {
+      "slot": "settings.section",
+      "slotId": "enterprise-compliance",
+      "label": "合规中心",
+      "order": 30
+    }
+  },
+  "redactionRules": [
+    "email", "phone", "id-card", "bank-card", "api-key", "jwt", "bearer", "private-key", "ip"
+  ],
+  "notes": [
+    "本目录文件是从运行中的 compl-1/pkg-1 导出的源码快照，供查阅与 git 版本管理。",
+    "动态插件本身不落盘：DSH 进程重启后需通过 cordis_define + cordis_run 重新注册（详见 README.md）。",
+    "host.js / client.js 即 cordis_define 的 code.host / code.client 参数原值。"
+  ]
+}
