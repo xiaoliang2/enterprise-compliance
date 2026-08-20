@@ -30,7 +30,9 @@ window.__ModuleLoader__.load({
       "card.pass": "PASS",
       "card.warn": "WARN",
       "card.fail": "FAIL",
-      "card.noAudit": "（暂无审计记录）"
+      "card.noAudit": "（暂无审计记录）",
+      "card.alert": "⚠ 合规告警",
+      "card.history": "评分趋势"
     };
     var en = {
       "card.title": "Enterprise Compliance Center",
@@ -44,7 +46,9 @@ window.__ModuleLoader__.load({
       "card.pass": "PASS",
       "card.warn": "WARN",
       "card.fail": "FAIL",
-      "card.noAudit": "(no audit records)"
+      "card.noAudit": "(no audit records)",
+      "card.alert": "⚠ Compliance alert",
+      "card.history": "Score trend"
     };
 
     var styles = {
@@ -61,7 +65,8 @@ window.__ModuleLoader__.load({
       warn: { background: "var(--dsw-alias-state-warn-primary)", color: "#000" },
       fail: { background: "var(--dsw-alias-state-error-primary)", color: "#fff" },
       ok: { color: "var(--dsw-alias-state-success-primary)", fontWeight: 600 },
-      err: { color: "var(--dsw-alias-state-error-primary)", fontWeight: 600 }
+      err: { color: "var(--dsw-alias-state-error-primary)", fontWeight: 600 },
+      alert: { background: "var(--dsw-alias-state-warn-primary)", color: "#000", padding: "4px 8px", borderRadius: "4px", fontSize: "12px" }
     };
 
     function badge(status) {
@@ -85,11 +90,16 @@ window.__ModuleLoader__.load({
       var auditCount = typeof value.auditCount === "number" ? value.auditCount : 0;
       var items = Array.isArray(value.items) ? value.items : [];
       var recent = Array.isArray(value.recent) ? value.recent : [];
+      var lastAlert = value.lastAlert && typeof value.lastAlert === "object" ? value.lastAlert : null;
+      var history = Array.isArray(value.history) ? value.history : [];
 
       return React.createElement("div", { style: styles.card },
         React.createElement("div", { style: styles.head },
           React.createElement("span", { style: styles.score }, score !== null ? score + "/100" : "…"),
           React.createElement("span", { style: styles.hint }, t("card.passed") + " " + passed + "/" + total)),
+        lastAlert && lastAlert.detail
+          ? React.createElement("div", { style: styles.alert }, t("card.alert") + "：" + lastAlert.detail + "（" + lastAlert.score + "/100）")
+          : null,
         React.createElement("p", { style: styles.hint }, t("card.tools")),
         React.createElement("div", { style: styles.sectionTitle }, t("card.items")),
         items.length === 0
@@ -99,6 +109,13 @@ window.__ModuleLoader__.load({
                 React.createElement("span", { style: badge(it.status) }, t("card." + it.status)),
                 React.createElement("span", { style: styles.label }, it.control));
             }),
+        history.length > 0 ? React.createElement("div", null,
+          React.createElement("div", { style: styles.sectionTitle }, t("card.history")),
+          React.createElement("div", { style: styles.row },
+            history.slice(-10).map(function (h, i) {
+              return React.createElement("span", { key: i, style: h.score >= 100 ? styles.ok : styles.err }, h.score + " ");
+            }))
+        ) : null,
         React.createElement("div", { style: styles.sectionTitle }, t("card.recent") + "（" + auditCount + "）"),
         recent.length === 0
           ? React.createElement("p", { style: styles.hint }, t("card.noAudit"))

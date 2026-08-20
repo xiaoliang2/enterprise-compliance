@@ -82,3 +82,20 @@ test("redactDeep 深度上限内仍能脱敏字符串", () => {
   const out = redactDeep(value, 0);
   assert.equal(out.a.b.c, "[email]");
 });
+
+test("规则开关：enabledRules 关闭某规则后该规则不再命中", () => {
+  const input = "a@b.com 13800138000";
+  const onlyPhone = redact(input, { email: false, phone: true });
+  assert.equal(onlyPhone.text, "a@b.com [phone]", "只开 phone 时邮箱应保留");
+  const onlyEmail = redact(input, { email: true, phone: false });
+  assert.equal(onlyEmail.text, "[email] 13800138000", "只开 email 时手机号应保留");
+  const allOff = redact(input, { email: false, phone: false });
+  assert.equal(allOff.text, input, "全关时应原样返回");
+  assert.equal(allOff.findings.length, 0);
+});
+
+test("redactDeep 透传规则开关", () => {
+  const deep = redactDeep({ email: "a@b.com", phone: "13800138000" }, 0, { email: false });
+  assert.equal(deep.email, "a@b.com", "关闭 email 后不应脱敏");
+  assert.equal(deep.phone, "[phone]", "未关闭的 phone 应脱敏");
+});

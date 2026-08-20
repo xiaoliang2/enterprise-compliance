@@ -1,7 +1,8 @@
 // enterprise-compliance — Host 插件集成冒烟测试
 // 真实加载 lib/index.js（发布的构建产物），用 mock ctx 驱动 apply()，
-// 覆盖：模块契约、3 个工具注册与执行、评分逻辑（全过 / 降级）、
-// 审计事件入账（成功/失败/session 捕获）、遥测脱敏接线、settings 桥、timer。
+// 覆盖：模块契约、6 个工具注册与执行、评分逻辑（全过 / 降级）、
+// 审计事件入账（成功/失败/session 捕获）、遥测脱敏接线、settings 桥、timer、
+// 策略可配置、阈值报警、评分历史、审计导出与过滤、数据导出/擦除、重启回载、文件扫描。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { name, inject, apply } from '../lib/index.js'
@@ -9,11 +10,13 @@ import { name, inject, apply } from '../lib/index.js'
 // 构造一个尽量贴近 Cordis 行为的 mock ctx：带 Guard 语义——
 // 只有 inject 声明的服务才能作为 ctx 属性直接访问，未声明的访问抛错，
 // 与真实 Cordis 运行时一致（防止 inject 声明与 apply 用法脱节再翻车）。
+// 可选 overrides.scopeGet 让 settings.register 返回自定义持久化数据（模拟重启回载）。
 function makeCtx(overrides = {}) {
   const registered = []   // settings.register 调用记录
   const updates = []      // settingsScope.update patch 记录
   const intervals = []    // timer.interval 调用记录
   const tools = []        // ctx.tools.register 记录
+  const emitted = []      // ctx.emit 事件记录
   const events = new Map()
   const injected = new Set(inject) // 从模块实际导出同步
 
@@ -28,7 +31,7 @@ function makeCtx(overrides = {}) {
       register(ns, schema, opts) {
         registered.push({ ns, schema, opts })
         return {
-          get: () => ({}),
+          get: () => (overrides.scopeGet !== undefined ? overrides.scopeGet : {}),
           watch: () => () => {},
           update: async (patch) => { updates.push({ ns, patch }) },
         }
@@ -44,6 +47,7 @@ function makeCtx(overrides = {}) {
     get(n) { return services[n] },
     on(ev, h) { events.set(ev, h) },
     effect(fn) { return fn() }, // 立即执行以完成一次性注册（timer/effect 类）
+    emit(ev, data) { emitted.push({ ev, data }) },
   }
   const ctx = new Proxy(base, {
     get(target, prop) {
@@ -53,11 +57,12 @@ function makeCtx(overrides = {}) {
       throw new Error(`cannot get property "${String(prop)}" without inject`)
     },
   })
-  return { ctx, services, registered, updates, intervals, tools, events }
+  return { ctx, services, registered, updates, intervals, tools, events, emitted }
 }
 
 const toolNames = (tools) => tools.map((t) => t.name)
 const findTool = (tools, n) => tools.find((t) => t.name === n)
+const ALL_TOOLS = ['compliance_report', 'compliance_redact', 'compliance_audit', 'compliance_scan', 'compliance_data_export', 'compliance_data_erase']
 
 test('模块契约：name / inject / apply 导出正确', () => {
   assert.equal(name, 'enterprise-compliance')
@@ -72,10 +77,10 @@ test('Guard 语义：未在 inject 声明的 ctx 属性访问抛错，声明的�
   assert.equal(typeof ctx.settings.register, 'function') // inject 声明的 settings
 })
 
-test('apply 注册 3 个工具，且元数据完整', () => {
+test('apply 注册 6 个工具，且元数据完整', () => {
   const { ctx, tools } = makeCtx()
   apply(ctx)
-  assert.deepEqual(toolNames(tools), ['compliance_report', 'compliance_redact', 'compliance_audit'])
+  assert.deepEqual(toolNames(tools), ALL_TOOLS)
   for (const t of tools) {
     assert.equal(typeof t.execute, 'function')
     assert.equal(typeof t.description, 'string')
@@ -108,6 +113,50 @@ test('compliance_report：危险沙箱 + 无审批 → 71/100，warn/fail 降级
   assert.ok(out.includes('[FAIL]'), '应包含 FAIL 项，实际: ' + out)
 })
 
+test('compliance_report：json 导出结构化报告，markdown 导出表格，含历史趋势', async () => {
+  const { ctx, tools } = makeCtx()
+  apply(ctx)
+  const j = await findTool(tools, 'compliance_report').execute({ format: 'json', history: true })
+  const parsed = JSON.parse(j)
+  assert.equal(parsed.report.score, 100)
+  assert.equal(parsed.report.total, 7)
+  assert.equal(parsed.report.items.length, 7)
+  assert.ok(Array.isArray(parsed.history), 'history: true 应附带历史')
+  const md = await findTool(tools, 'compliance_report').execute({ format: 'markdown' })
+  assert.ok(md.includes('# 企业合规报告'), 'markdown 应含标题: ' + md)
+  assert.ok(md.includes('| 检查项 | 状态 | 说明 |'), 'markdown 应含表格头: ' + md)
+})
+
+test('评分历史：连续调用记录历史（同分 60s 内去重）并持久化到 settings patch', async () => {
+  const { ctx, tools, updates } = makeCtx()
+  const realNow = Date.now
+  let t = 1000000
+  Date.now = () => t
+  try {
+    apply(ctx)
+    await findTool(tools, 'compliance_report').execute({}) // 记录第 1 条
+    t += 61000
+    await findTool(tools, 'compliance_report').execute({}) // 记录第 2 条
+    const last = updates[updates.length - 1].patch
+    assert.equal(last.history.length, 2, '应持久化 2 条历史: ' + JSON.stringify(last.history))
+    assert.equal(last.history[0].score, 100)
+    // 同分且 60s 内再调 → 不重复记录
+    const n = updates[updates.length - 1].patch.history.length
+    await findTool(tools, 'compliance_report').execute({})
+    assert.equal(updates[updates.length - 1].patch.history.length, n, '60s 内同分不应新增历史')
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('策略可配置：关闭 approval 检查后 total=6 且不再出现该检查项', async () => {
+  const { ctx, tools } = makeCtx({ scopeGet: { policy: { checks: { approval: false } } } })
+  apply(ctx)
+  const out = await findTool(tools, 'compliance_report').execute({})
+  assert.ok(out.includes('通过 6/6'), '应 6/6，实际: ' + out)
+  assert.ok(!out.includes('CC6.2'), '不应包含已关闭的检查项，实际: ' + out)
+})
+
 test('compliance_redact：邮箱+手机号被掩码，且命中统计正确', async () => {
   const { ctx, tools } = makeCtx()
   apply(ctx)
@@ -118,6 +167,14 @@ test('compliance_redact：邮箱+手机号被掩码，且命中统计正确', as
   assert.ok(out.includes('[email]') && out.includes('[phone]'))
   assert.ok(!out.includes('alice@example.com'), '邮箱未被掩码')
   assert.ok(!out.includes('13800138000'), '手机号未被掩码')
+})
+
+test('compliance_redact：rules 参数仅启用指定规则', async () => {
+  const { ctx, tools } = makeCtx()
+  apply(ctx)
+  const out = await findTool(tools, 'compliance_redact').execute({ text: 'a@b.com 13800138000', rules: ['phone'] })
+  assert.ok(out.includes('[phone]'), '应脱敏手机号: ' + out)
+  assert.ok(out.includes('a@b.com'), '未启用 email 规则时应保留邮箱: ' + out)
 })
 
 test('compliance_audit：初始为空 → 提示暂无记录', async () => {
@@ -147,6 +204,56 @@ test('tools/result 事件：失败调用记录 FAIL + 错误信息', async () =>
   const out = await findTool(tools, 'compliance_audit').execute({})
   assert.ok(out.includes('fs-read'), '应含工具名，实际: ' + out)
   assert.ok(out.includes('FAIL (boom)'), '应含 FAIL+错误，实际: ' + out)
+})
+
+test('compliance_audit：json/csv 导出与 tool/session 过滤', async () => {
+  const { ctx, tools, events } = makeCtx()
+  apply(ctx)
+  events.get('tools/result')({ name: 'shell', args: { x: 1 }, agent: { session: { id: 's-1' } } }, { ok: true })
+  events.get('tools/result')({ name: 'read', args: { p: '/a' } }, { ok: false, error: 'denied' })
+  const j = await findTool(tools, 'compliance_audit').execute({ format: 'json' })
+  const arr = JSON.parse(j)
+  assert.equal(arr.length, 2)
+  assert.equal(arr[0].tool, 'read') // 最新在前
+  assert.equal(arr[0].error, 'denied')
+  const csv = await findTool(tools, 'compliance_audit').execute({ format: 'csv' })
+  assert.ok(csv.startsWith('time,tool,ok,error,sessionId'), 'csv 应有表头: ' + csv.slice(0, 40))
+  const onlyShell = JSON.parse(await findTool(tools, 'compliance_audit').execute({ tool: 'shell', format: 'json' }))
+  assert.equal(onlyShell.length, 1)
+  assert.equal(onlyShell[0].tool, 'shell')
+  const onlySession = JSON.parse(await findTool(tools, 'compliance_audit').execute({ sessionId: 's-1', format: 'json' }))
+  assert.equal(onlySession.length, 1)
+  const sinceOnly = JSON.parse(await findTool(tools, 'compliance_audit').execute({ since: Date.now() + 100000, format: 'json' }))
+  assert.equal(sinceOnly.length, 0)
+})
+
+test('阈值报警：评分跌破阈值触发事件并写入 lastAlert，恢复后清零', async () => {
+  const { ctx, services, events, intervals, updates, emitted } = makeCtx()
+  const realNow = Date.now
+  let t = 1000000
+  Date.now = () => t
+  try {
+    apply(ctx) // 全过 → 100 分，不报警
+    // 运行时降级 → 71 分 < 阈值 100
+    services.approval = undefined
+    services.sandboxPolicy = { defaultMode: 'danger-full-access', workspaceRoot: 'C:/ws' }
+    t += 5000
+    const iv = intervals.find((i) => i.ms === 5000)
+    iv.fn()
+    assert.ok(emitted.some((e) => e.ev === 'enterprise-compliance/alert'), '应发出 alert 事件: ' + JSON.stringify(emitted))
+    const last = updates[updates.length - 1].patch
+    assert.ok(last.lastAlert && last.lastAlert.detail, 'lastAlert 应写入: ' + JSON.stringify(last.lastAlert))
+    assert.equal(last.lastAlert.score, 71)
+    // 恢复 → 再次 tick → lastAlert 清零
+    services.approval = {}
+    services.sandboxPolicy = { defaultMode: 'workspace-write', workspaceRoot: 'C:/ws' }
+    t += 5000
+    iv.fn()
+    const after = updates[updates.length - 1].patch
+    assert.equal(after.lastAlert.detail, '', '恢复后 lastAlert 应清零: ' + JSON.stringify(after.lastAlert))
+  } finally {
+    Date.now = realNow
+  }
 })
 
 test('session-telemetry/record：敏感字段被脱敏（数据最小化接线）', () => {
@@ -180,6 +287,9 @@ test('settings 桥：register 命名空间正确、schema 有效、初始状态�
   assert.equal(patch.total, 7)
   assert.equal(patch.items.length, 7)
   assert.ok(Array.isArray(patch.recent))
+  assert.ok(Array.isArray(patch.audit), 'patch 应含持久化审计')
+  assert.ok(Array.isArray(patch.history), 'patch 应含历史')
+  assert.ok(patch.policy && typeof patch.policy === 'object', 'patch 应含策略')
   assert.ok(intervals.some((i) => i.ms === 5000), '应注册 5s 状态刷新定时器')
 })
 
@@ -237,12 +347,86 @@ test('StatusSchema 校验真实 patch：sessionId 缺省补空串、空对象回
   assert.equal(empty.total, 7)
   assert.deepEqual(empty.items, [])
   assert.deepEqual(empty.recent, [])
+  assert.deepEqual(empty.audit, [], 'audit 应默认空数组')
+  assert.deepEqual(empty.history, [], 'history 应默认空数组')
+  assert.equal(empty.policy.alertThreshold, 100, '策略默认报警阈值应为 100')
+  assert.equal(empty.policy.checks.approval, true, '检查项默认开启')
+  assert.equal(empty.policy.rules.email, true, '规则默认开启')
+  assert.equal(empty.lastAlert.detail, '', 'lastAlert 默认空')
+})
+
+test('重启回载：settings 持久化数据在 apply 时恢复审计/历史/策略', async () => {
+  const { ctx, tools, emitted } = makeCtx({
+    scopeGet: {
+      audit: [{ time: 111, tool: 'old', ok: true, sessionId: 'x' }],
+      history: [{ time: 111, score: 86, passed: 6, total: 7 }],
+      policy: { alertThreshold: 80 },
+    },
+  })
+  apply(ctx)
+  const out = await findTool(tools, 'compliance_audit').execute({})
+  assert.ok(out.includes('old'), '回载的审计应可见，实际: ' + out)
+  assert.ok(out.includes('OK'), '回载审计应含状态')
+  // 回载策略生效：阈值 80，当前 100 分 → 不报警
+  assert.ok(!emitted.some((e) => e.ev === 'enterprise-compliance/alert'), '高分不应报警')
+})
+
+test('compliance_data_export：导出插件采集数据（Art.20 可携带权）', async () => {
+  const { ctx, tools, events } = makeCtx()
+  apply(ctx)
+  events.get('tools/result')({ name: 'shell', args: { x: 1 } }, { ok: true })
+  const out = await findTool(tools, 'compliance_data_export').execute({})
+  const parsed = JSON.parse(out)
+  assert.equal(parsed.provider, '@xiaobanli/dsh-enterprise-compliance')
+  assert.ok(Array.isArray(parsed.data.audit), '应导出审计')
+  assert.equal(parsed.data.audit.length, 1)
+  assert.ok(parsed.data.audit[0].tool === 'shell')
+})
+
+test('compliance_data_erase：confirm 必填（框架校验），确认后清空审计/历史/报警（Art.17 删除权）', async () => {
+  const { ctx, tools, events } = makeCtx()
+  apply(ctx)
+  events.get('tools/result')({ name: 'shell', args: { x: 1 } }, { ok: true })
+  // confirm 声明为 required → 缺参由 dsh-tools 强制校验抛错（比软拒绝更严格，防止误触发销毁）
+  await assert.rejects(() => findTool(tools, 'compliance_data_erase').execute({}), /confirm/, '缺 confirm 应抛 ToolArgsError')
+  const ok = await findTool(tools, 'compliance_data_erase').execute({ confirm: true })
+  assert.ok(ok.includes('已擦除'), '确认后应擦除: ' + ok)
+  const out = await findTool(tools, 'compliance_audit').execute({})
+  assert.equal(out, '（暂无审计记录）', '擦除后审计应清空')
+})
+
+test('compliance_scan：扫描真实文件发现敏感信息（allowOutside）', async () => {
+  const { ctx, tools } = makeCtx()
+  apply(ctx)
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const base = fileURLToPath(new URL('../', import.meta.url))
+  const dir = await mkdtemp(join(base, '.scan-test-'))
+  const f = join(dir, 'secret.txt')
+  await writeFile(f, '联系 alice@example.com 或 key sk-abcdefghijklmnopqrstuvwxyz123456')
+  try {
+    const out = await findTool(tools, 'compliance_scan').execute({ path: f, allowOutside: true })
+    assert.ok(out.includes('secret.txt'), '应包含文件名: ' + out)
+    assert.ok(out.includes('emailx1'), '应含邮箱命中: ' + out)
+    assert.ok(out.includes('apikeyx1'), '应含 api-key 命中: ' + out)
+    assert.ok(!out.includes('alice@example.com'), '样例应已脱敏: ' + out)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('compliance_scan：默认拒绝扫描工作区之外路径', async () => {
+  const { ctx, tools } = makeCtx()
+  apply(ctx)
+  const out = await findTool(tools, 'compliance_scan').execute({ path: 'C:/outside-everything/secret.txt' })
+  assert.ok(out.includes('工作区之外'), '应拒绝工作区外路径: ' + out)
 })
 
 test('缺服务健壮性：无 settings/timer/sandboxPolicy 等 → apply 不抛错、工具仍可用', async () => {
   const { ctx, tools } = makeCtx({ services: { settings: undefined, timer: undefined, sandboxPolicy: undefined, approval: undefined, credentials: undefined, sessionPersistence: undefined, sessionTelemetry: undefined } })
   apply(ctx) // 不应抛错
-  assert.deepEqual(toolNames(tools), ['compliance_report', 'compliance_redact', 'compliance_audit'])
+  assert.deepEqual(toolNames(tools), ALL_TOOLS)
   const out = await findTool(tools, 'compliance_report').execute({})
   assert.ok(out.includes('沙箱=unknown'), '缺服务时应标记 unknown，实际: ' + out)
 })

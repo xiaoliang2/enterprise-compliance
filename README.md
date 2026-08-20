@@ -1,16 +1,24 @@
 # @xiaobanli/dsh-enterprise-compliance
 
-企业级一体化合规插件（DeepSeek Harness / DSH）。三大能力支柱：
+企业级一体化合规插件（DeepSeek Harness / DSH）。六大能力：
 
 1. **SOC2 / GDPR 自动化合规自检** — `compliance_report` 模型工具：读取真实运行时事实，按
-   CC6.1 / CC6.2 / CC7.2 / CC6.6 / A1.2 与 GDPR Art.5 / Art.25 逐项 PASS / WARN / FAIL 并打分。
+   CC6.1 / CC6.2 / CC7.2 / CC6.6 / A1.2 与 GDPR Art.5 / Art.25 逐项 PASS / WARN / FAIL 并打分；
+   支持 `summary / json / markdown` 三格式导出，并记录**评分历史趋势**。
 2. **敏感信息拦截与脱敏** — `compliance_redact` 模型工具 + 9 类正则规则（邮箱、手机号、身份证、
    银行卡、API Key、JWT、Bearer、私钥、IP）；已挂载到 `session-telemetry/record` 瀑布流，
    遥测导出前自动脱敏（GDPR 数据最小化）。
-3. **操作日志审计追溯** — `compliance_audit` 模型工具：监听 `tools/result`，记录每次工具调用的
-   时间、工具名、成功 / 失败、会话 ID、**脱敏后的参数**（500 条内存环形缓冲）。
+3. **操作审计追溯 + 持久化导出** — `compliance_audit` 模型工具：监听 `tools/result`，记录每次
+   工具调用的时间、工具名、成功 / 失败、会话 ID、**脱敏后的参数**；审计**持久化到 settings.yaml**，
+   重启不丢证据，支持 `text / json / csv` 导出与按工具 / 会话 / 时间过滤。
+4. **敏感数据文件扫描** — `compliance_scan` 模型工具：扫描工作区文件 / 目录中的明文敏感信息，
+   返回逐文件命中统计与脱敏样例（默认限工作区，可 `allowOutside`）。
+5. **GDPR 数据主体权利** — `compliance_data_export`（Art.20 导出采集的数据）/ `compliance_data_erase`
+   （Art.17 一键擦除审计 / 历史 / 报警状态，需 `confirm: true`）。
+6. **阈值报警 + 可配置策略** — 评分跌破 `alertThreshold` 时发出 `enterprise-compliance/alert` 事件并
+   在页面显示告警横幅；检查项开关、脱敏规则开关、报警阈值、审计持久化条数均可在 设置 里调整。
 
-另附浏览器「企业合规中心」独立页面（设置 → 左侧导航，`settings.section`），订阅 Host 发布的合规状态，展示评分、检查项与最近审计。
+另附浏览器「企业合规中心」独立页面（设置 → 左侧导航，`settings.section`），订阅 Host 发布的合规状态，展示评分、检查项、最近审计、评分趋势与告警横幅。
 
 ## 目录结构
 
@@ -82,11 +90,11 @@ npm publish
 
 ## 测试
 
-三个测试套件，共 30 项，全部不依赖浏览器 / 真实 DSH 进程即可运行：
+三个测试套件，共 43 项，全部不依赖浏览器 / 真实 DSH 进程即可运行：
 
 ```bash
-node test/redact.test.mjs       # 12 项：9 类脱敏规则 + redactDeep 递归/深度
-node test/host.smoke.test.mjs   # 13 项：真实加载 lib/index.js，mock ctx 驱动 apply()
+node test/redact.test.mjs       # 14 项：9 类脱敏规则 + 递归/深度 + 规则开关
+node test/host.smoke.test.mjs   # 25 项：真实加载 lib/index.js，mock ctx 驱动 apply()
 node test/client.smoke.test.mjs # 4 项：真实加载 client/client.js，校验工厂与渲染
 npm test                        # 或 node --test test/（等价，node --test 会按文件分进程）
 npm run build                   # 把 src/ 同步到 lib/ 与 client/
@@ -94,10 +102,17 @@ npm run check                   # build + test
 ```
 
 **Host 冒烟测试覆盖**（直接执行插件代码，非仅语法检查）：
-- 模块契约 `{ name, inject, apply }` 与 3 个工具注册（`ctx.tools.register(defineTool(...))`）；
-- `compliance_report` 两种评分场景：全部服务挂载 → 100/100，危险沙箱 + 无审批 → 71/100（warn/fail 降级）；
-- `compliance_redact` 掩码与命中统计；`compliance_audit` 初始空 / 入账后含工具名、OK/FAIL、session；
-- `tools/result` 成功与失败事件入账、`session-telemetry/record` 脱敏接线（数据最小化）；
+- 模块契约 `{ name, inject, apply }` 与 **6 个工具**注册（`ctx.tools.register(defineTool(...))`）；
+- `compliance_report` 评分场景：全部服务挂载 → 100/100，危险沙箱 + 无审批 → 71/100（warn/fail 降级）；
+  `json` / `markdown` 导出与历史趋势、同分 60s 去重；
+- 策略可配置：关闭某检查项后 total 减少且该项不再出现；
+- 阈值报警：跌破阈值触发 `enterprise-compliance/alert` 事件 + `lastAlert` 写入，恢复后清零；
+- `compliance_redact` 掩码与命中统计、`rules` 参数局部启用；`compliance_audit` 初始空 / 入账 /
+  `json` / `csv` 导出与 tool / session / since 过滤；
+- 重启回载：settings 持久化的审计 / 历史 / 策略在 apply 时恢复；
+- `compliance_data_export` 导出采集数据、`compliance_data_erase` confirm 必填 + 确认后清空；
+- `compliance_scan` 真实文件扫描发现敏感信息（含脱敏样例）、默认拒绝工作区外路径；
+- `tools/result` 成功 / 失败事件入账、`session-telemetry/record` 脱敏接线（数据最小化）；
 - `settings` 桥：命名空间注册、初始状态发布、5s 刷新定时器、节流与「无变化不重复写盘」；
 - 缺全部服务时的健壮性（apply 不抛错、工具仍可用）。
 
@@ -120,9 +135,11 @@ Guard 翻车（`inject=[]` 却访问 `ctx.tools`、settings 未挂载即注册�
 
 ## 架构说明
 
-- **Host（src/index.js）**：ESM 导出 `{ name, apply(ctx) }`，用真实 Host 服务注册三个模型工具
-  （`ctx.tools.register(defineTool(...))`），监听 `tools/result` 采集审计、`session-telemetry/record`
-  做导出脱敏，`ctx.settings.register` 维护合规状态命名空间供 Client 读取。
+- **Host（src/index.js）**：ESM 导出 `{ name, apply(ctx) }`，用真实 Host 服务注册 6 个模型工具
+  （`ctx.tools.register(defineTool(...))`：`compliance_report` / `compliance_redact` /
+  `compliance_audit` / `compliance_scan` / `compliance_data_export` / `compliance_data_erase`），
+  监听 `tools/result` 采集审计、`session-telemetry/record` 做导出脱敏，`ctx.settings.register`
+  维护合规状态命名空间（含策略 / 持久化审计 / 历史 / 报警）供 Client 读取并落盘 settings.yaml。
 - **Client（src/client.js）**：`settings.section` 侧边栏注册「企业合规中心」独立页面，订阅
   `enterprise-compliance` settings 命名空间；含 zh/en 双语词典。Host 端 `inject: ['tools','settings']`
   （settings 为硬依赖，保证命名空间注册时服务已挂载），Client 端 `inject: ['slots','locale','settingsScope']`。
@@ -131,7 +148,10 @@ Guard 翻车（`inject=[]` 却访问 `ctx.tools`、settings 未挂载即注册�
 
 ## 已知限制
 
-- 审计为内存环形缓冲（非持久化），仅采集插件运行期间的工具调用。
+- 审计**持久化不含参数**（`args` 仅在内存环中存在，落盘的是时间 / 工具 / 结果 / 会话 / 错误，重启后参数不再可查）。
+- 持久化条数默认 100（`policy.auditPersist` 可调），内存环上限 500。
+- `compliance_scan` 跳过二进制文件与超过 1MB 的文本文件。
+- `compliance_data_erase` 仅擦除**本插件自身**采集的数据（审计 / 历史 / 报警状态），不涉及 DSH 其他数据。
 - 部分检查项结果取决于运行时服务是否挂载（审批 / 凭证 / 持久化 / 遥测）。
 - 合规中心页面依赖 `settings` 服务存在；缺失时仅影响页面展示，不影响模型工具。
 
