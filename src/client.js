@@ -7,7 +7,7 @@
 // 构建格式与 DSH 其他 client 插件一致：window.__ModuleLoader__.load(...)。
 
 window.__ModuleLoader__.load({
-  id: "dsh-enterprise-compliance",
+  id: "@xiaobanli/dsh-enterprise-compliance",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;

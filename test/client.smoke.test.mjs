@@ -20,7 +20,7 @@ new Function('window', src)(sandboxWindow)
 
 test('产物契约：__ModuleLoader__.load({ id, factory })', () => {
   assert.ok(loaded, '应调用 window.__ModuleLoader__.load')
-  assert.equal(loaded.id, 'dsh-enterprise-compliance')
+  assert.equal(loaded.id, '@xiaobanli/dsh-enterprise-compliance')
   assert.equal(typeof loaded.factory, 'function')
 })
 

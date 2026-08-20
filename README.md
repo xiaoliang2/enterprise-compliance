@@ -1,4 +1,4 @@
-# dsh-enterprise-compliance
+# @xiaobanli/dsh-enterprise-compliance
 
 企业级一体化合规插件（DeepSeek Harness / DSH）。三大能力支柱：
 
@@ -55,7 +55,7 @@ dsh plugin --profile desktop add file:./enterprise-compliance  # desktop 版
 > `loaded without registering "…"`。恢复方法：把该插件放回 profile 的 `cordis.patch.yml`
 > insert，并从 `dsh.profile.bundles` 移除（本插件自身已按包名注册，无此问题）。
 
-**npm 安装**：发布到 npm 后同样通过 `dsh plugin add dsh-enterprise-compliance` 安装。
+**npm 安装**：`dsh plugin add @xiaobanli/dsh-enterprise-compliance`。
 
 ## 发布到 GitHub / npm
 
@@ -75,12 +75,14 @@ npm publish
 #    https://github.com/imsai-sh/awesome-deepseek-harness-plugins
 ```
 
-> 发布前把 `package.json` 的 `repository.url` 从占位符 `<owner>/<repository>` 改成真实地址；
-> 如使用 npm scope，把 `name` 改为 `@<scope>/dsh-enterprise-compliance` 并同步 `cordis.patch.yml` 里的 `name`。
+> 本包已发布到 npm `@xiaobanli` scope（`@xiaobanli/dsh-enterprise-compliance`）。发布前把
+> `package.json` 的 `repository.url` 从占位符改成真实地址；若换 scope，改 `name` 为
+> `@<scope>/dsh-enterprise-compliance` 并同步 `cordis.patch.yml` 的 `name` 与 client 模块 id
+> （`__ModuleLoader__.load({ id })`，id 必须等于包名）。
 
 ## 测试
 
-三个测试套件，共 29 项，全部不依赖浏览器 / 真实 DSH 进程即可运行：
+三个测试套件，共 30 项，全部不依赖浏览器 / 真实 DSH 进程即可运行：
 
 ```bash
 node test/redact.test.mjs       # 12 项：9 类脱敏规则 + redactDeep 递归/深度
