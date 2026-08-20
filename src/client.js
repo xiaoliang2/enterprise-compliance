@@ -1,5 +1,5 @@
 // enterprise-compliance — client bundle (browser)
-// 在 设置 → 插件 的可配置插件页注册一张合规状态卡片：
+// 在 设置 左侧导航注册一个「企业合规中心」独立页面（settings.section）：
 //   - 合规评分（score/100）与通过项数；
 //   - SOC2/GDPR 检查项清单（PASS/WARN/FAIL）；
 //   - 最近操作审计（时间/工具/结果/会话，参数已在 Host 端脱敏）。
@@ -118,17 +118,15 @@ window.__ModuleLoader__.load({
       }, "enterprise-compliance: dictionaries");
       var t = ctx.locale.bind(NS);
       var scope = ctx.settingsScope.bind({ namespace: NS });
-      ctx.slots.inject("settings.plugin.item", function () {
+      ctx.slots.inject("settings.section", function () {
         return ctx.slots.register({
-          name: "settings.plugin.item",
-          key: NS,
+          name: "settings.section",
           id: "enterprise-compliance",
           order: 30,
-          locale: NS,
-          inject: function () {
-            return { t: t, scope: scope };
-          }
-        }, ComplianceCard);
+          label: function () { return t("card.title"); }
+        }, function () {
+          return React.createElement(ComplianceCard, { t: t, scope: scope });
+        });
       });
     }
 

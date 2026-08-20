@@ -2,7 +2,7 @@
 // 真实加载 client/client.js（发布产物），校验：
 //   - __ModuleLoader__.load 契约（id + factory）
 //   - factory 返回 { name, inject, apply }，inject 服务正确
-//   - apply 接线：locale 注册 / settingsScope 绑定 / settings.plugin.item 槽注入
+//   - apply 接线：locale 注册 / settingsScope 绑定 / settings.section 侧边栏页注册
 //   - ComplianceCard 组件用真实 React.createElement 渲染出预期结构
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -61,21 +61,20 @@ test('apply 接线：locale 注册、settingsScope 绑定、slot 注入', () => 
   assert.ok(calls.localeRegister[0].dicts.en['card.title'])
   // settingsScope 绑定命名空间
   assert.deepEqual(calls.settingsBind, [{ namespace: 'enterprise-compliance' }])
-  // slot 注入发生在 settings.plugin.item
+  // slot 注入发生在 settings.section（设置侧边栏独立页面）
   assert.equal(calls.slotsInject.length, 1)
-  assert.equal(calls.slotsInject[0].slot, 'settings.plugin.item')
-  // 触发注入回调 → slots.register 注册卡片
+  assert.equal(calls.slotsInject[0].slot, 'settings.section')
+  // 触发注入回调 → slots.register 注册页面
   calls.slotsInject[0].fn()
   assert.equal(calls.slotsRegister.length, 1)
   const reg = calls.slotsRegister[0]
   assert.equal(reg.desc.id, 'enterprise-compliance')
   assert.equal(reg.desc.order, 30)
-  assert.equal(reg.desc.key, 'enterprise-compliance')
+  // 侧边栏标签来自 locale 绑定
+  assert.equal(typeof reg.desc.label, 'function')
+  assert.equal(reg.desc.label(), '[card.title]')
+  // 页面组件存在
   assert.equal(typeof reg.Component, 'function')
-  // inject 提供 { t, scope }
-  const injected = reg.desc.inject()
-  assert.equal(typeof injected.t, 'function')
-  assert.equal(injected.scope, scope)
 })
 
 test('ComplianceCard 渲染逻辑：真实 createElement + 受控 store，输出预期结构', () => {
@@ -86,7 +85,12 @@ test('ComplianceCard 渲染逻辑：真实 createElement + 受控 store，输出
   const plugin = loaded.factory((mod) => (mod === 'react' ? shim : require(mod)))
 
   let reg = null
-  let scope = null
+  const snap = { value: {
+    score: 86, passed: 6, total: 7, auditCount: 2,
+    items: [{ id: 'sandbox', status: 'pass', control: 'CC6.1' }, { id: 'approval', status: 'fail', control: 'CC6.2' }],
+    recent: [{ time: 1, tool: 'web', ok: true, sessionId: 's-1' }, { time: 2, tool: 'fs', ok: false }],
+  } }
+  const scope = { subscribe() { return () => {} }, getSnapshot() { return snap } }
   const ctx = {
     effect(fn) { return fn() },
     locale: {
@@ -100,15 +104,9 @@ test('ComplianceCard 渲染逻辑：真实 createElement + 受控 store，输出
     },
   }
   plugin.apply(ctx)
-  const snap = { value: {
-    score: 86, passed: 6, total: 7, auditCount: 2,
-    items: [{ id: 'sandbox', status: 'pass', control: 'CC6.1' }, { id: 'approval', status: 'fail', control: 'CC6.2' }],
-    recent: [{ time: 1, tool: 'web', ok: true, sessionId: 's-1' }, { time: 2, tool: 'fs', ok: false }],
-  } }
-  scope = { subscribe() { return () => {} }, getSnapshot() { return snap } }
-
-  const { t } = reg.desc.inject()
-  const el = reg.Component({ t, scope }) // 直接调用组件函数 → 真实元素树
+  const wrapperEl = reg.Component({}) // 页面组件闭包使用 apply 时绑定的 t/scope
+  // 手动渲染函数组件：createElement(ComplianceCard, props) → 调用组件函数得到元素树
+  const el = typeof wrapperEl.type === 'function' ? wrapperEl.type(wrapperEl.props) : wrapperEl
   const texts = []
   ;(function walk(node) {
     if (node == null) return
