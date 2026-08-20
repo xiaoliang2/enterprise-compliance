@@ -10,7 +10,7 @@
 3. **操作日志审计追溯** — `compliance_audit` 模型工具：监听 `tools/result`，记录每次工具调用的
    时间、工具名、成功 / 失败、会话 ID、**脱敏后的参数**（500 条内存环形缓冲）。
 
-另附浏览器「合规中心」状态卡片（设置 → 插件），订阅 Host 发布的合规状态，展示评分、检查项与最近审计。
+另附浏览器「企业合规中心」独立页面（设置 → 左侧导航，`settings.section`），订阅 Host 发布的合规状态，展示评分、检查项与最近审计。
 
 ## 目录结构
 
@@ -21,7 +21,7 @@ enterprise-compliance/
 ├── src/
 │   ├── redact.js       # 脱敏引擎（纯函数、零依赖、可独立测试）
 │   ├── index.js        # Host 插件（真实 Host API：tools.register / ctx.on / settings）
-│   └── client.js       # Client 插件（__ModuleLoader__.load 包装，settings 卡片）
+│   └── client.js       # Client 插件（__ModuleLoader__.load 包装，settings 侧边栏页）
 ├── lib/                # 提交的 Host 构建产物（git 安装无需 prepare）
 ├── client/client.js    # 提交的 Client 构建产物
 ├── scripts/build.mjs   # 同步 src → lib/client
@@ -41,6 +41,19 @@ dsh plugin --profile desktop add file:./enterprise-compliance
 ```
 
 安装后本包被加入 profile 的 `dsh.profile.bundles`，`cordis.patch.yml` 在下次启动自动应用。
+
+本插件**只依赖 DSH 官方契约**（无 Desktop 专属服务），web 与 desktop profile 均可安装：
+
+```bash
+dsh plugin --profile web add file:./enterprise-compliance      # web 版
+dsh plugin --profile desktop add file:./enterprise-compliance  # desktop 版
+```
+
+> **已知坑（compact-after-task）**：`dsh plugin add` 的 pnpm reconcile 会把 profile 里原本按
+> 「patch insert」挂载的第三方插件一并挪进 `dsh.profile.bundles`，从而改变其 client 模块 id 的
+> 期望（= 包名）。第三方 client 若未按包名注册 `__ModuleLoader__.load({ id })` 就会启动报错
+> `loaded without registering "…"`。恢复方法：把该插件放回 profile 的 `cordis.patch.yml`
+> insert，并从 `dsh.profile.bundles` 移除（本插件自身已按包名注册，无此问题）。
 
 **npm 安装**：发布到 npm 后同样通过 `dsh plugin add dsh-enterprise-compliance` 安装。
 
@@ -86,10 +99,14 @@ npm run check                   # build + test
 - `settings` 桥：命名空间注册、初始状态发布、5s 刷新定时器、节流与「无变化不重复写盘」；
 - 缺全部服务时的健壮性（apply 不抛错、工具仍可用）。
 
-**Client 冒烟测试覆盖**：`__ModuleLoader__.load({ id, factory })` 契约、工厂返回
+**Client 冒烟测试覆盖**：`__ModuleLoader__.load({ id, factory })` 契约（**id = 包名**）、工厂返回
 `{ name, inject: ['slots','locale','settingsScope'], apply }`、apply 接线（locale 注册 /
-settingsScope 绑定 / `settings.plugin.item` 槽注入）、卡片用真实 `React.createElement`
+settingsScope 绑定 / `settings.section` 侧边栏页注册）、页面用真实 `React.createElement`
 渲染出评分、检查项、审计行。
+
+**Host 测试的 Guard 语义**：mock ctx 带 Cordis Guard（未在 `inject` 声明的 ctx 属性访问即抛错），
+从模块导出的 `inject` 自动同步——若 apply 用了未声明的服务，测试当场红。历史上两处真实环境
+Guard 翻车（`inject=[]` 却访问 `ctx.tools`、settings 未挂载即注册）都由这种盲区漏掉，现已堵上。
 
 > **依赖说明**：仓库内 `node_modules/` 已 gitignore。沙箱本地测试时复制了 DSH 自带
 > `@deepseek-ai/*`、`react` 等包以便运行上述冒烟测试；真实环境安装后由 DSH / npm 解析，
@@ -104,8 +121,9 @@ settingsScope 绑定 / `settings.plugin.item` 槽注入）、卡片用真实 `Re
 - **Host（src/index.js）**：ESM 导出 `{ name, apply(ctx) }`，用真实 Host 服务注册三个模型工具
   （`ctx.tools.register(defineTool(...))`），监听 `tools/result` 采集审计、`session-telemetry/record`
   做导出脱敏，`ctx.settings.register` 维护合规状态命名空间供 Client 读取。
-- **Client（src/client.js）**：`settings.plugin.item` 槽位注入合规状态卡片，订阅
-  `enterprise-compliance` settings 命名空间；含 zh/en 双语词典。
+- **Client（src/client.js）**：`settings.section` 侧边栏注册「企业合规中心」独立页面，订阅
+  `enterprise-compliance` settings 命名空间；含 zh/en 双语词典。Host 端 `inject: ['tools','settings']`
+  （settings 为硬依赖，保证命名空间注册时服务已挂载），Client 端 `inject: ['slots','locale','settingsScope']`。
 - **副作用均 Fiber 所有**：`ctx.on` / `ctx.tools.register` / `ctx.settings.register` /
   `ctx.effect` / `slots.inject` / `locale.register`，插件卸载时自动清理。
 
@@ -113,7 +131,7 @@ settingsScope 绑定 / `settings.plugin.item` 槽注入）、卡片用真实 `Re
 
 - 审计为内存环形缓冲（非持久化），仅采集插件运行期间的工具调用。
 - 部分检查项结果取决于运行时服务是否挂载（审批 / 凭证 / 持久化 / 遥测）。
-- 状态卡片依赖 `settings` 服务存在；缺失时仅影响卡片展示，不影响模型工具。
+- 合规中心页面依赖 `settings` 服务存在；缺失时仅影响页面展示，不影响模型工具。
 
 ## 与早期动态插件版本的关系
 

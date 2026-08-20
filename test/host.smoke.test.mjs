@@ -6,15 +6,19 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { name, inject, apply } from '../lib/index.js'
 
-// 构造一个尽量贴近 Cordis 行为的 mock ctx。
+// 构造一个尽量贴近 Cordis 行为的 mock ctx：带 Guard 语义——
+// 只有 inject 声明的服务才能作为 ctx 属性直接访问，未声明的访问抛错，
+// 与真实 Cordis 运行时一致（防止 inject 声明与 apply 用法脱节再翻车）。
 function makeCtx(overrides = {}) {
   const registered = []   // settings.register 调用记录
   const updates = []      // settingsScope.update patch 记录
   const intervals = []    // timer.interval 调用记录
   const tools = []        // ctx.tools.register 记录
   const events = new Map()
+  const injected = new Set(inject) // 从模块实际导出同步
 
   const services = {
+    tools: { register(t) { tools.push(t) } },
     sandboxPolicy: { defaultMode: 'workspace-write', workspaceRoot: 'C:/ws' },
     approval: {},
     sessionPersistence: {},
@@ -36,12 +40,19 @@ function makeCtx(overrides = {}) {
     ...(overrides.services || {}),
   }
 
-  const ctx = {
+  const base = {
     get(n) { return services[n] },
     on(ev, h) { events.set(ev, h) },
     effect(fn) { return fn() }, // 立即执行以完成一次性注册（timer/effect 类）
-    tools: { register(t) { tools.push(t) } },
   }
+  const ctx = new Proxy(base, {
+    get(target, prop) {
+      if (typeof prop === 'symbol') return Reflect.get(target, prop)
+      if (Reflect.has(target, prop)) return Reflect.get(target, prop)
+      if (injected.has(prop)) return services[prop]
+      throw new Error(`cannot get property "${String(prop)}" without inject`)
+    },
+  })
   return { ctx, services, registered, updates, intervals, tools, events }
 }
 
@@ -52,6 +63,13 @@ test('模块契约：name / inject / apply 导出正确', () => {
   assert.equal(name, 'enterprise-compliance')
   assert.deepEqual(inject, ['tools', 'settings'])
   assert.equal(typeof apply, 'function')
+})
+
+test('Guard 语义：未在 inject 声明的 ctx 属性访问抛错，声明的可用', () => {
+  const { ctx } = makeCtx()
+  assert.throws(() => ctx.undeclaredThing, /without inject/)
+  assert.equal(typeof ctx.tools.register, 'function') // inject 声明的 tools
+  assert.equal(typeof ctx.settings.register, 'function') // inject 声明的 settings
 })
 
 test('apply 注册 3 个工具，且元数据完整', () => {
