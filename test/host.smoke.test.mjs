@@ -50,7 +50,7 @@ const findTool = (tools, n) => tools.find((t) => t.name === n)
 
 test('模块契约：name / inject / apply 导出正确', () => {
   assert.equal(name, 'enterprise-compliance')
-  assert.deepEqual(inject, ['tools'])
+  assert.deepEqual(inject, ['tools', 'settings'])
   assert.equal(typeof apply, 'function')
 })
 
