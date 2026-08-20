@@ -8,7 +8,7 @@ import { RULES, redact, redactDeep } from "./redact.js";
 
 export const name = "enterprise-compliance";
 
-export const inject = [];
+export const inject = ["tools"];
 
 const AUDIT_CAP = 500;
 const STATUS_NS = "enterprise-compliance";
