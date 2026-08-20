@@ -1,6 +1,6 @@
 {
   "name": "@xiaobanli/dsh-enterprise-compliance",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Enterprise compliance for DeepSeek Harness — SOC2/GDPR automated checks, sensitive-info redaction, and a redacted tool audit trail. · DSH 企业级合规插件：SOC2/GDPR 自动化合规自检、敏感信息拦截与脱敏、操作日志审计追溯。",
   "type": "module",
   "main": "lib/index.js",

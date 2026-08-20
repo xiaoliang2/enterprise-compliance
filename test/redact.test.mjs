@@ -41,6 +41,12 @@ test("脱敏 API Key / JWT / Bearer", () => {
   assert.equal(r.text, "[api-key] [jwt] [bearer]");
 });
 
+test("脱敏 OpenAI/Anthropic 项目密钥（sk-proj-/sk-ant-，含连字符）", () => {
+  const r = redact("token sk-proj-abcdef1234567890abcdef1234567890 and sk-ant-api03-abcdef1234567890-1234567890-1234567890 done");
+  assert.ok(r.findings.some((f) => f.type === "apikey" && f.count === 2), "应命中 2 个 api-key: " + JSON.stringify(r.findings));
+  assert.ok(!r.text.includes("sk-proj-") && !r.text.includes("sk-ant-"), "样例应已脱敏: " + r.text);
+});
+
 test("脱敏多行 PEM 私钥", () => {
   const pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----";
   const r = redact(pem);

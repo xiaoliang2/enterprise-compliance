@@ -423,6 +423,37 @@ test('compliance_scan：默认拒绝扫描工作区之外路径', async () => {
   assert.ok(out.includes('工作区之外'), '应拒绝工作区外路径: ' + out)
 })
 
+test('compliance_scan：优先用 exec 会话 cwd 解析相对路径（无 allowOutside 也通过）', async () => {
+  const { ctx, tools } = makeCtx({ services: { sandboxPolicy: { defaultMode: 'workspace-write', workspaceRoot: 'C:/ws' } } })
+  apply(ctx)
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+  const { join, basename } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const base = fileURLToPath(new URL('../', import.meta.url))
+  const dir = await mkdtemp(join(base, '.scan-exec-'))
+  const f = join(dir, 'secret.txt')
+  await writeFile(f, 'contact alice@example.com key sk-abcdefghijklmnopqrstuvwxyz123456')
+  try {
+    // 相对路径 + 会话 cwd = dir，且不开 allowOutside → 证明解析与包含校验都用了会话 cwd
+    const exec = { agent: { session: { header: { cwd: dir } } } }
+    const out = await findTool(tools, 'compliance_scan').execute({ path: basename(f) }, exec)
+    assert.ok(out.includes('secret.txt'), '相对路径应按会话 cwd 解析: ' + out)
+    assert.ok(out.includes('emailx1'), '应含邮箱命中: ' + out)
+    assert.ok(out.includes('apikeyx1'), '应含 api-key 命中: ' + out)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('compliance_report：exec 会话 cwd 覆盖 workspaceRoot 展示', async () => {
+  const { ctx, tools } = makeCtx()
+  apply(ctx)
+  const exec = { agent: { session: { header: { cwd: 'C:/session-ws' } } } }
+  const j = await findTool(tools, 'compliance_report').execute({ format: 'json' }, exec)
+  const parsed = JSON.parse(j)
+  assert.equal(parsed.report.runtime.workspaceRoot, 'C:/session-ws', '应展示会话 cwd，实际: ' + parsed.report.runtime.workspaceRoot)
+})
+
 test('缺服务健壮性：无 settings/timer/sandboxPolicy 等 → apply 不抛错、工具仍可用', async () => {
   const { ctx, tools } = makeCtx({ services: { settings: undefined, timer: undefined, sandboxPolicy: undefined, approval: undefined, credentials: undefined, sessionPersistence: undefined, sessionTelemetry: undefined } })
   apply(ctx) // 不应抛错

@@ -7,7 +7,7 @@ export const RULES = [
   { id: 'phone', label: 'phone', re: /\b1[3-9]\d{9}\b/g },
   { id: 'idcard', label: 'id-card', re: /\b\d{17}[\dXx]\b/g },
   { id: 'bankcard', label: 'bank-card', re: /\b\d{16,19}\b/g },
-  { id: 'apikey', label: 'api-key', re: /\b(?:sk-[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36,}|xox[bap]-[A-Za-z0-9-]{10,})\b/g },
+  { id: 'apikey', label: 'api-key', re: /\b(?:sk-[A-Za-z0-9]{16,}|sk-(?:proj|ant)-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36,}|xox[bap]-[A-Za-z0-9-]{10,})\b/g },
   { id: 'jwt', label: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
   { id: 'bearer', label: 'bearer', re: /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/gi },
   { id: 'privatekey', label: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----\n[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
